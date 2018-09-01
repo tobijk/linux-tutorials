@@ -1,0 +1,375 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article SYSTEM "http://www.ecromedos.net/dtd/2.0/ecromedos.dtd">
+<article lang="en_US" fontsize="12pt" papersize="a4paper" div="14"
+	secnumdepth="1" secsplitdepth="0" columns="1" parskip="half">
+
+	<head>
+		<subject>Tutorial</subject>
+		<title>Deploying Xen on Debian Etch</title>
+		<author>Tobias Koch</author>
+		<date>March 14, 2007</date>
+		<publisher><tt><link url="http://tobijk.de"><img src="tobijk.svg" print-width="1.5cm" screen-width="60px"/></link></tt></publisher>
+	</head>
+
+	<make-toc depth="2"/>
+
+	<abstract>
+		<p>
+		This document describes how to install and use the Xen Hypervisor on a Debian 4.0 (Etch)
+		GNU/Linux system. It covers everything from the installation of the required packages to
+		building and running a virtual machine with networking enabled.
+		</p>
+	</abstract>
+
+	<section>
+		<title>Prerequisites</title>
+		<p>
+		All procedures described in this document are very Debian-specific. Therefore, the reader
+		is expected to have a good understanding of Debian GNU/Linux system administration. The
+		installation host should be on a network and have access to an online Debian Package Repository
+		(and be configured to use it).
+		</p>
+	</section>
+
+	<section>
+		<title>Installing Required Packages</title>
+		<p>
+		First off, you'll have to install the hypervisor and a Xen-enabled Linux Kernel:
+		</p>
+		<verbatim strip="yes">
+			<color rgb="#000099"><![CDATA[
+
+$> aptitude install xen-hypervisor-3.0.3-1-i386-pae\
+	linux-image-2.6-xen-686
+
+			]]></color>
+		</verbatim>
+		<p>
+		<title>Note for the i386-architecture:</title><i>Debian Etch will <b>only ship with
+		PAE-enabled kernels</b> for Xen </i><cite idref="bib:xen-pae"/><i>. Therefore, if you don't
+		feel like building your own non-PAE kernel, you will have to install the PAE version of the
+		hypervisor, even if your machine does not have more than 4 Gigs of memory.</i>
+		</p>
+		<p>
+		In addition, you will need the <tt>debootstrap</tt> utility for creating guest systems:
+		</p>
+		<verbatim strip="yes">
+			<color rgb="#000099"><![CDATA[
+
+$> aptitude install debootstrap
+
+			]]></color>
+		</verbatim>
+		<p>
+		Reboot your computer. The first entry in the GRUB boot menu should now let you start up
+		your system under the control of Xen.
+		</p>
+	</section>
+
+	<section>
+		<title>Preparing a Guest System</title>
+		<p>
+		This section explains how to manually bootstrap a fresh Debian installation into a disk-image,
+		such that it can be started as a guest (domU) from inside the Xen host system (dom0).
+		</p>
+		<subsection>
+			<title>Creating Disk Images</title>
+			<p>
+			As a container for the guest OS, create two files: one large enough to hold the
+			operating system and another one to be used as a swap partition. In the following
+			example, a 600MB file for the system partition and a 200MB file for swap is created:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> dd if=/dev/zero of=hda1.img bs=1M count=600
+$> mkfs.ext3 hda1.img
+$> dd if=/dev/zero of=hda2.img bs=1M count=200
+$> mkswap hda2.img
+
+				]]></color>			
+			</verbatim>
+		</subsection>
+
+		<subsection>
+			<title>Bootstrapping Debian</title>
+			<p>
+			You will now learn how to bootstrap a complete Debian system manually, using the
+			<tt>debootstrap</tt> utility. The procedure described here can also be helpful,
+			when you need to install Debian on hardware which is not supported by the Debian
+			Installer, for example from a Knoppix <cite idref="bib:knoppix"/> Live CD.
+			</p>
+			<p>
+			Temporarily mount the system disk over a loop device like this:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> mount -o loop hda1.img /mnt
+
+				]]></color>			
+			</verbatim>
+			<p>
+			Now install a Debian base system into <tt>/mnt</tt> by calling <tt>debootstrap</tt> as follows:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> debootstrap etch /mnt
+
+				]]></color>			
+			</verbatim>
+			<p>
+			You may observe strange	warning messages like the following, while <tt>debootstrap</tt>
+			is running:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+4gb seg fixup, process sed (pid 3767), cs:ip 73:0811846a
+				</code>
+			</listing>
+			<p>
+			This is because the new system contains a version of the C runtime library which is not
+			suited for use in a Xen environment. You can safely ignore these messages for now, we
+			will resolve this issue later. Just relax and take a break until the script has finished
+			its job.
+			</p>
+		</subsection>
+
+		<subsection>
+			<title>Base System Configuration</title>
+			<p>
+			Before you can boot up the guest system, there are a few things you have to set up
+			manually. The first thing is to copy <tt>/etc/resolv.conf</tt> from the host to the
+			guest:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> cp /etc/resolv.conf /mnt/etc/resolv.conf
+
+				]]></color>			
+			</verbatim>
+			<p>
+			This is necessary for DNS resolution to work while we are <i>chrooted</i> inside the
+			disk image. Next, we are going to install a version of the C runtime library specifically
+			built for use with Xen:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> chroot /mnt
+$> aptitude update
+$> aptitude install libc6-xen
+$> exit
+
+				]]></color>
+			</verbatim>
+			<p>Next time you chroot into the disk image there should be no more of the afore-mentioned
+			warning messages from the kernel. Now chroot again into the guest system and install and configure
+			the <tt>locales</tt> package and the kernel:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> chroot /mnt
+$> aptitude install locales linux-image-2.6-xen-686
+$> dpkg-reconfigure locales
+
+				]]></color>
+			</verbatim>
+			<p>
+			Please note that unless your CPU has virtualization support and you configure Xen to make
+			use of it, you will be booting the virtual host with a kernel image residing on the <i>host's</i>
+			filesystem. The kernel image inside the guest will never be actually loaded. However, you
+			still have to install it in order to be able to load additional kernel <i>modules</i> from
+			inside the VM. As a side effect, installing	the kernel makes aptitude also install the
+			support infrastructure for hotplugging.
+			</p>
+			<p>
+			<title>Important:</title> <i>You should always make sure that the kernel you use
+			to <b>boot</b> your VM is identical to the one you have installed <b>inside</b> your VM.</i>
+			</p>
+			<p>
+			So far, the system has no network devices configured. However, for proper operation it is
+			imperative that at least the loopback device is brought up. Therefore, you have to edit
+			<tt>/etc/&zwsp;network/&zwsp;interfaces</tt> and insert the following:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+auto lo
+iface lo inet loopback
+				</code>
+			</listing>
+			<p>
+			In order for the local hostname to be resolvable in absense of any connection to the
+			internet domain name system, you have to supply an <tt>/etc/&zwsp;hosts</tt> file with
+			the following content:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+127.0.0.1    localhost
+127.0.1.1    hostname.example.com    hostname
+
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+ff02::3 ip6-allhosts
+				</code>
+			</listing>
+			<p>
+			And as the final step in making the system bootable, edit <tt>/etc/&zwsp;fstab</tt> and insert the
+			following lines:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+proc        /proc    proc    defaults    0    0
+/dev/hda1   /        ext3    defaults    0    1
+/dev/hda2   none     swap    sw          0    0
+				</code>
+			</listing>
+			<p>
+			Done. You may now leave the chroot environment with a hearty <color rgb="#000099"><tt><q>exit</q></tt></color>.
+			</p>
+		</subsection>
+	</section>
+
+	<section>
+		<title>Running a Virtual Machine</title>
+		<p>
+		In a few minutes, you will be starting up your first virtual machine. The following sections
+		explain how it is done.
+		</p>
+		<subsection>
+			<title>Configuring Domain Properties</title>
+			<p>
+			The guest system's setup is complete. All that is left to do, is to create a configuration
+			file for Xen, telling the Xen Daemon which kernel to load, how to simulate peripherals and
+			how to handle networking for the virtual domain. Create a file with the following contents:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+				<![CDATA[
+kernel = "/boot/vmlinuz-2.6.18-4-xen-686"
+ramdisk = "/boot/initrd.img-2.6.18-4-xen-686"
+memory = 64
+name = "001"
+disk = [ 'file:/storage/VM/001/hda1.img,hda1,w',
+	'file:/storage/VM/001/hda2.img,hda2,w']
+root = "/dev/hda1 ro"
+				]]>
+				</code>
+			</listing>
+			<p>
+			Of course, you have to substitute the names of kernel, ramdisk and the path to your disk
+			images as appropriate. Note that each VM <i>must</i> carry a different name. The <tt>root</tt>
+			parameter is passed on to the kernel. Apart from that, everything should be pretty much
+			self-explanatory. You may also want to take a look at the examples in
+			<tt>/usr/&zwsp;share/&zwsp;doc/&zwsp;xen-utils-common/&zwsp;examples/</tt>.
+			</p>
+		</subsection>
+		
+		<subsection>
+			<title>Booting the VM</title>
+			<p>
+			You are finally at the point where you should be able to start up the virtual machine. To do
+			so, issue the following command:
+			</p>
+			<verbatim strip="yes">
+				<color rgb="#000099"><![CDATA[
+
+$> xm create -c <configfile>
+
+				]]></color>
+			</verbatim>
+			<p>
+			You should see the usual boot messages from kernel and init scripts run off the screen until, at last,
+			the login prompt appears. After logging in as root, you should immediately set the root password.
+			</p>
+			<p>
+			In addition, the timezone has not been configured. To do so, run <color rgb="#000099"><tt><q>tzconfig</q></tt></color>.
+			</p>
+			<p>
+			You can detach from the virtual console by pressing <tt>Ctrl^]</tt>. To re-attach, issue
+			the command <color rgb="#000099"><tt><q>xm console &lt;domain&gt;</q></tt></color>. In order to list
+			all running domains, enter <color rgb="#000099"><tt><q>xm list</q></tt></color>.
+			</p>
+		</subsection>
+
+		<subsection>
+			<title>Enable Networking</title>
+			<p>
+			When installed manually and on most other Linux distributions, the Xen Daemon will automatically create a
+			network bridge on your primary network interface and join interfaces from guest domains on this bridge
+			when they are created with <color rgb="#000099"><tt><q>xm create</q></tt></color>.
+			However, Debian policies prohibit individual packages from touching the network setup. This	is why, on
+			Debian, the Xen Daemon doesn't do this. If you look at it the right way, this really is a
+			feature. Because it means that you can configure networking for Xen <qq>The Debian Way</qq>, without having
+			to mess around with the daemon's configuration files.
+			</p>
+			<p>
+			On your <i>host</i> system, edit <tt>/etc/&zwsp;network/&zwsp;interfaces</tt>, <i>remove</i> the
+			configuration for the network device you wish to use for bridging the Xen virtual interfaces, and
+			configure the bridge analogously to the following example:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+				<![CDATA[
+iface ethX inet static
+
+auto br0
+iface br0 inet dhcp
+	bridge_ports ethX
+				]]>
+				</code>
+			</listing>
+			<p>
+			The empty section for <tt>ethX</tt> is necessary to prevent the <i>network manager</i> from managing this
+			device. The documentation on how to configure network bridges through <i>ifupdown</i> can be
+			found in <tt>/usr/&zwsp;share/&zwsp;doc/&zwsp;bridge-utils/&zwsp;README.Debian.gz</tt>
+			</p>
+			<p>
+			Restart networking manually or reboot your computer for the changes to take effect. When listing
+			your system's network devices, you should now see a fully configured interface <tt>br0</tt>,
+			as well as device <tt>ethX</tt> in promiscuous mode and carrying no addresses.
+			</p>
+			<p>
+			Append the following line to your guest system's configuration file:
+			</p>
+			<listing>
+				<code bgcolor="#eeeeee" strip="yes">
+				<![CDATA[
+vif = ['mac=00:16:3e:00:00:01,bridge=br0']
+				]]>
+				</code>
+			</listing>
+			<p>
+			When you restart your virtual machine, you should now have a configurable network interface
+			<tt>eth0</tt> inside the guest system. Please remember to use a different MAC address for
+			every interface throughout every guest domain you create.
+			</p>
+		</subsection>
+	</section>
+
+	<biblio number="yes">
+		<bibitem id="bib:xen-manual" label="XENMAN">
+			Xen Source, Inc. <i>Xen Users' Manual (Xen 3.0)</i>. <br/>URL:
+			<link url="http://tx.downloads.xensource.com/downloads/docs/user/"><tt>http://&zwsp;tx.&zwsp;downloads.&zwsp;xensource.&zwsp;com/&zwsp;downloads/&zwsp;docs/&zwsp;user/</tt></link>.
+		</bibitem>
+		<bibitem id="bib:debian" label="DEBIAN">
+			The Debian Community. <i>The Debian GNU/Linux Operating System</i>. <br/>URL:
+			<link url="http://www.debian.org"><tt>http://www.debian.org</tt></link>.
+		</bibitem>
+		<bibitem id="bib:xen-pae" label="XENBUGa">
+			Debian Bug-Tracking System. <i>PAE/bigmem-Version of Xen kernel</i>. <br/>URL:
+			<link url="http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=390862"><tt>http://&zwsp;bugs.&zwsp;debian.&zwsp;org/&zwsp;cgi-bin/&zwsp;bugreport.cgi?bug=390862</tt></link>.
+		</bibitem>
+		<bibitem id="bib:knoppix" label="KNOPPIX">
+			Klaus Knopper. <i>Knoppix Live Linux on CD</i>. <br/>URL:
+			<link url="http://knopper.net/knoppix/index-en.html"><tt>http://&zwsp;knopper.&zwsp;net/&zwsp;knoppix/&zwsp;index-en.html</tt></link>.
+		</bibitem>
+	</biblio>
+
+</article>
