@@ -111,12 +111,13 @@ Add a relay supporting the WeeChat protocol via
 
 ```
 /relay add ssl.weechat 9000
+/relay add ssl.irc     9001
 ```
 
 Autostart
 ===============================================================================
 
-In order to launch WeeChat automatically on system boot, create system service
+In order to launch WeeChat automatically on system boot, create a system service
 file `weechat.service` in `/etc/systemd/system` with the following contents:
 
 ```
